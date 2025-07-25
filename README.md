@@ -59,7 +59,7 @@ See `requirements.txt` for the full list.
 1. Clone the repository:
    ```
    git clone https://github.com/TimKenobi/Script_Weaver.git
-   cd Script_Weaver
+   cd ScriptWeaver
    ```
 
 2. Create and activate a virtual environment:
@@ -78,6 +78,7 @@ See `requirements.txt` for the full list.
 Launch the main script to open the GUI:
 
 ```
+cd app
 python main.py
 ```
 
