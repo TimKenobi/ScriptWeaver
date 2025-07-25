@@ -1,378 +1,390 @@
-# main_window.py
+# app/gui/main_window.py
 
-from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QMessageBox, QDialog,
-    QProgressDialog, QApplication, QTabWidget, QGridLayout, QToolBar
-)
-from PyQt6.QtGui import QIcon, QAction  # Corrected import for QAction
-from PyQt6.QtCore import Qt
-import logging
 import sys
-import time
+import logging
 from pathlib import Path
 from hashlib import sha256
-import threading
+import importlib
 import webbrowser
 
-# Import your custom dialogs
-from app.gui.dialogs import PasswordDialog, SystemPasswordDialog
-# Import your settings
-from app.config.settings import SCRIPTS, PASSWORD_HASH, MAX_LOGIN_ATTEMPTS, setup_logging
-
-# Initialize logging
-setup_logging()
-
-# Import the sudo utilities
-from app.utils.sudo_utils import (
-    check_sudo_password, keep_sudo_active,
-    run_script_as_sudo, run_script_no_sudo
+from PyQt6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QMessageBox, QDialog, QTabWidget, QGridLayout, QToolBar, QLineEdit,
+    QApplication
 )
+from PyQt6.QtGui import QIcon, QAction, QPixmap
+from PyQt6.QtCore import Qt, QSize
+
+from app.config import settings
+from app.gui.dialogs import PasswordDialog, SystemPasswordDialog, AboutDialog
+from app.gui.script_output_dialog import ScriptOutputDialog
+from app.gui.settings_window import SettingsWindow
+from app.utils.sudo_utils import check_sudo_password, keep_sudo_active
+from app.utils.script_runner import ScriptRunner
+from app.utils.file_utils import audit_script_files
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         logging.info("Initializing main window")
-        self.setWindowTitle("Script Weaver")
+        self.setWindowTitle(settings.APP_NAME)
+        self.setWindowIcon(QIcon.fromTheme("system-run"))
+        self._auth_success = False
 
-        # 1) Authenticate at the application level (your existing password check)
         if not self.authenticate():
-            logging.info("Authentication failed, closing application")
-            sys.exit()
+            logging.warning("Application-level authentication failed. Exiting.")
+            return
 
-        # 2) Prompt for the system (macOS) password once
         if not self.authenticate_system_password():
-            # If user cancels or fails, exit
-            logging.info("Failed to get a valid system password, closing app")
-            sys.exit()
+            logging.warning("System-level authentication failed. Exiting.")
+            return
 
-        # Now we have self.system_password containing the valid macOS password
-        # We keep the sudo session alive in the background to avoid timeouts
+        self._auth_success = True
         self.start_sudo_keep_alive()
-
         self.setup_ui()
+        self.resize(1000, 800)
+        
+        self.perform_script_audit()
+        
+        logging.info("Main window initialized successfully.")
 
-        # Make the window resizable and set a smaller initial size
-        self.setMinimumSize(800, 600)
-        self.resize(800, 600)
+    def is_auth_successful(self):
+        return self._auth_success
 
     def setup_ui(self):
         logging.debug("Setting up UI")
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
 
-        welcome_label = QLabel("Welcome to Script Weaver!")
+        self.add_toolbar_actions()
+
+        self.logo_label = QLabel()
+        self.logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.load_logo()
+        main_layout.addWidget(self.logo_label)
+
+        welcome_label = QLabel(f"Welcome to {settings.APP_NAME}!")
+        welcome_label.setObjectName("WelcomeLabel")
         welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(welcome_label)
+        main_layout.addWidget(welcome_label)
 
-        # Button for Install Company Portal (includes description in pop-up):
-        install_company_portal_button = QPushButton("Install Company Portal")
-        script_info = next((s for s in SCRIPTS if s['id'] == 'install_company_portal'), None)
-        desc = script_info['description'] if script_info else ""
-        install_company_portal_button.clicked.connect(
-            lambda: self.confirm_and_run(self.run_install_company_portal, desc)
-        )
-        layout.addWidget(install_company_portal_button)
+        self.workflow_buttons_container = QWidget()
+        main_layout.addWidget(self.workflow_buttons_container)
+        self.setup_workflow_buttons()
 
-        # Example: New Setup buttons
-        buttons_layout = QHBoxLayout()
-        self.add_script_button(buttons_layout, "New Setup", self.run_new_setup, "Runs the new setup scripts")
-        layout.addLayout(buttons_layout)
-
-        # Advanced Features button
-        self.advanced_button = QPushButton("Advanced Features")
+        self.advanced_button = QPushButton("Show Advanced Features")
         self.advanced_button.clicked.connect(self.toggle_advanced_features)
-        layout.addWidget(self.advanced_button)
+        main_layout.addWidget(self.advanced_button)
 
-        # Advanced features layout
         self.advanced_widget = QWidget()
-        self.advanced_layout = QVBoxLayout(self.advanced_widget)
-        self.advanced_tabs = QTabWidget()
-        self.advanced_tabs.addTab(self.create_tab_content('Tools'), "Tools")
-        self.advanced_tabs.addTab(self.create_tab_content('Configuration'), "Configuration")
-        self.advanced_tabs.addTab(self.create_tab_content('Software'), "Software")
-        self.advanced_layout.addWidget(self.advanced_tabs)
-        self.advanced_widget.setVisible(False)  # Initially hidden
-        layout.addWidget(self.advanced_widget)
+        advanced_layout = QVBoxLayout(self.advanced_widget)
 
-        self.setMinimumSize(1200,1000)
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("Search:"))
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Filter scripts by name or description...")
+        self.search_bar.textChanged.connect(self.filter_scripts)
+        search_layout.addWidget(self.search_bar)
+        advanced_layout.addLayout(search_layout)
 
-        # Add info icon to the toolbar
-        self.add_info_icon()
+        self.script_tabs = QTabWidget()
+        self.populate_script_tabs()
+        advanced_layout.addWidget(self.script_tabs)
 
-    def add_info_icon(self):
+        self.advanced_widget.setVisible(False)
+        main_layout.addWidget(self.advanced_widget)
+        main_layout.addStretch()
+
+    def load_logo(self):
+        if hasattr(settings, 'LOGO_PATH') and settings.LOGO_PATH:
+            logo_path = settings.APP_DIR / settings.LOGO_PATH
+            if logo_path.exists():
+                pixmap = QPixmap(str(logo_path))
+                self.logo_label.setPixmap(pixmap.scaled(256, 128, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            else:
+                logging.warning(f"Logo file not found at: {logo_path}")
+                self.logo_label.clear()
+        else:
+            self.logo_label.clear()
+
+    def add_toolbar_actions(self):
         toolbar = QToolBar("Main Toolbar")
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+        
+        about_action = QAction(QIcon.fromTheme("help-about"), "About...", self)
+        about_action.triggered.connect(self.open_about_dialog)
+        toolbar.addAction(about_action)
 
-        info_action = QAction(QIcon.fromTheme("help-about"), "Info", self)
-        info_action.triggered.connect(self.open_info_link)
-        toolbar.addAction(info_action)
+        help_action = QAction(QIcon.fromTheme("help-faq"), "Online Help", self)
+        help_action.triggered.connect(self.open_info_link)
+        toolbar.addAction(help_action)
+        
+        toolbar.addSeparator()
+        
+        settings_action = QAction(QIcon.fromTheme("document-properties"), "Settings...", self)
+        settings_action.triggered.connect(self.open_settings_window)
+        toolbar.addAction(settings_action)
 
-    def open_info_link(self):
-        webbrowser.open("https://github.com/TimKenobi/Script_Weaver/")
+    def open_about_dialog(self):
+        dialog = AboutDialog(self)
+        dialog.exec()
 
-    def run_install_company_portal(self):
-        """Run the Install Company Portal script."""
-        self.run_script_by_id('companyportal')
+    def open_settings_window(self):
+        dialog = SettingsWindow(self)
+        result = dialog.exec()
+        
+        if result == QDialog.DialogCode.Accepted:
+            logging.info("Settings were changed. Reloading configuration and UI.")
+            importlib.reload(settings)
+            self.setWindowTitle(settings.APP_NAME)
+            self.load_logo()
+            self.populate_script_tabs()
+            self.setup_workflow_buttons()
 
-    def add_script_button(self, layout, name, callback, description=""):
-        """
-        Example wrapper to add a button that triggers confirm_and_run with a description.
-        """
-        button = QPushButton(name)
-        button.clicked.connect(lambda: self.confirm_and_run(callback, description))
-        layout.addWidget(button)
+    def populate_script_tabs(self):
+        self.script_tabs.clear()
+        all_categories = sorted(list(set(s['category'] for s in settings.SCRIPTS)))
+        self.tab_widgets = {}
 
-    def confirm_and_run(self, script_function, script_description=""):
-        """
-        Generic confirmation pop-up that includes the script’s description.
-        """
-        message = f"Are you sure you want to run this script?\n\n{script_description}"
-        reply = QMessageBox.question(
-            self,
-            'Confirmation',
-            message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            script_function()
+        for category in all_categories:
+            is_uninstaller_category = category.lower() == 'uninstall'
+            if is_uninstaller_category and all(self.is_linked_uninstaller(s['id']) for s in settings.SCRIPTS if s['category'] == category):
+                continue
 
-    def toggle_advanced_features(self):
-        self.advanced_widget.setVisible(not self.advanced_widget.isVisible())
-        if self.advanced_widget.isVisible():
-            self.advanced_button.setText("Hide Advanced Features")
-        else:
-            self.advanced_button.setText("Advanced Features")
+            tab_content = QWidget()
+            layout = QGridLayout(tab_content)
+            layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+            self.tab_widgets[category] = {'widget': tab_content, 'layout': layout, 'cell_widgets': []}
+            self.script_tabs.addTab(tab_content, category.capitalize())
 
-    def create_tab_content(self, category):
-        tab_content = QWidget()
-        layout = QGridLayout(tab_content)
+        for script in sorted(settings.SCRIPTS, key=lambda s: s['name'].lower()):
+            category = script['category']
+            
+            if category.lower() == 'uninstall' and self.is_linked_uninstaller(script['id']):
+                continue
 
-        scripts = [s for s in SCRIPTS if s['category'] == category]
-        for i, script in enumerate(scripts):
+            if category not in self.tab_widgets:
+                continue
+
+            cell_widget = QWidget()
+            cell_layout = QHBoxLayout(cell_widget)
+            cell_layout.setContentsMargins(2, 2, 2, 2)
+            cell_layout.setSpacing(5)
+            cell_widget.setProperty("script_id", script['id'])
+
             button = QPushButton(script['name'])
             button.setToolTip(script['description'])
-            button.clicked.connect(
-                lambda _, s=script: self.confirm_and_run(
-                    lambda: self.run_script_by_id(s['id']),
-                    s['description']
-                )
-            )
-            layout.addWidget(button, i // 4, i % 4)  # Adjust the 4 to change columns
+            button.clicked.connect(lambda _, s=script: self.confirm_and_run_script(s))
+            cell_layout.addWidget(button)
 
-        return tab_content
+            if script.get('category', '').lower() == 'software' and script.get('uninstall_id'):
+                uninstall_script = self.get_script_by_id(script['uninstall_id'])
+                if uninstall_script:
+                    uninstall_button = QPushButton()
+                    uninstall_button.setIcon(QIcon.fromTheme("edit-delete"))
+                    uninstall_button.setToolTip(f"Uninstall: {uninstall_script['name']}\n{uninstall_script['description']}")
+                    uninstall_button.setFixedWidth(35)
+                    uninstall_button.clicked.connect(lambda _, s=uninstall_script: self.confirm_and_run_script(s))
+                    cell_layout.addWidget(uninstall_button)
+
+            cell_list = self.tab_widgets[category]['cell_widgets']
+            row, col = divmod(len(cell_list), 3)
+            self.tab_widgets[category]['layout'].addWidget(cell_widget, row, col)
+            cell_list.append(cell_widget)
+
+    def is_linked_uninstaller(self, script_id):
+        return any(script_id == s.get('uninstall_id') for s in settings.SCRIPTS if 'uninstall_id' in s)
+
+    def filter_scripts(self):
+        filter_text = self.search_bar.text().lower()
+        for category, data in self.tab_widgets.items():
+            for cell_widget in data['cell_widgets']:
+                script_id = cell_widget.property("script_id")
+                script = self.get_script_by_id(script_id)
+                if not script: continue
+                matches_name = filter_text in script['name'].lower()
+                matches_desc = filter_text in script['description'].lower()
+                cell_widget.setVisible(matches_name or matches_desc)
+
+    def setup_workflow_buttons(self):
+        if self.workflow_buttons_container.layout() is not None:
+            old_layout = self.workflow_buttons_container.layout()
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+            import sip
+            sip.delete(old_layout)
+
+        workflow_layout = QHBoxLayout(self.workflow_buttons_container)
+        
+        if not settings.WORKFLOWS:
+            self.workflow_buttons_container.setVisible(False)
+            return
+
+        self.workflow_buttons_container.setVisible(True)
+        for wf_id, wf_details in settings.WORKFLOWS.items():
+            button = QPushButton(wf_details['name'])
+            button.setToolTip(wf_details['description'])
+            button.setIcon(QIcon.fromTheme("media-playlist-repeat"))
+            button.setIconSize(QSize(24, 24))
+            button.clicked.connect(lambda _, wid=wf_id, dets=wf_details: self.confirm_and_run_workflow(wid, dets))
+            workflow_layout.addWidget(button)
+
+    def open_info_link(self):
+        webbrowser.open("https://github.com/TimKenobi?tab=overview")
+
+    def toggle_advanced_features(self):
+        is_visible = not self.advanced_widget.isVisible()
+        self.advanced_widget.setVisible(is_visible)
+        self.advanced_button.setText("Hide Advanced Features" if is_visible else "Show Advanced Features")
+
+    def confirm_and_run_script(self, script_info):
+        reply = QMessageBox.question(self, 'Confirmation',
+            f"Are you sure you want to run this script?\n\n<b>{script_info['name']}</b>\n{script_info['description']}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.run_script(script_info)
+
+    def confirm_and_run_workflow(self, workflow_id, workflow_details):
+        script_names = "\n".join([f"- {self.get_script_by_id(sid)['name']}" for sid in workflow_details['scripts'] if self.get_script_by_id(sid)])
+        reply = QMessageBox.question(self, 'Confirmation',
+            f"Are you sure you want to run the '{workflow_details['name']}' workflow?\n\nIt will run the following scripts in order:\n{script_names}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.run_multiple_scripts(workflow_details['scripts'], workflow_details['name'])
+
+    def run_script(self, script_info, is_workflow_part=False):
+        logging.info(f"Running script: {script_info['name']} (ID: {script_info['id']})")
+        dialog = ScriptOutputDialog(f"Running: {script_info['name']}", self)
+        
+        # CORRECTED PATH: Use SCRIPT_DIR, not APP_DIR
+        script_path = settings.SCRIPT_DIR / script_info['path']
+        if not script_path.exists():
+            error_msg = f"Script file not found: {script_path}"
+            logging.error(error_msg)
+            dialog.append_output(f"ERROR: {error_msg}\n")
+            dialog.mark_as_failed()
+            dialog.exec()
+            return False
+
+        runner = ScriptRunner(str(script_path), self.system_password, script_info.get('needs_sudo', False))
+        runner.output_ready.connect(dialog.append_output)
+        runner.finished.connect(dialog.mark_as_finished)
+        
+        runner.start()
+        dialog.exec()
+        return runner.get_success_status()
+
+    def run_multiple_scripts(self, script_ids, workflow_name):
+        logging.info(f"Starting workflow: {workflow_name}")
+        dialog = ScriptOutputDialog(f"Workflow: {workflow_name}", self)
+        dialog.show()
+        
+        total_success = True
+        for i, script_id in enumerate(script_ids):
+            script_info = self.get_script_by_id(script_id)
+            if not script_info:
+                error_msg = f"Workflow aborted: Script with ID '{script_id}' not found."
+                logging.error(error_msg)
+                dialog.append_output(f"\n--- ERROR ---\n{error_msg}\n")
+                total_success = False
+                break
+
+            dialog.append_output(f"\n--- Starting Step {i+1}/{len(script_ids)}: {script_info['name']} ---\n")
+            QApplication.processEvents()
+
+            # CORRECTED PATH: Use SCRIPT_DIR, not APP_DIR
+            script_path = settings.SCRIPT_DIR / script_info['path']
+            if not script_path.exists():
+                dialog.append_output(f"ERROR: Script file not found: {script_path}\n")
+                success = False
+            else:
+                runner = ScriptRunner(str(script_path), self.system_password, script_info.get('needs_sudo', False))
+                runner.output_ready.connect(dialog.append_output)
+                
+                runner.start()
+                while not runner.isFinished():
+                    QApplication.processEvents()
+                success = runner.get_success_status()
+
+            dialog.append_output(f"--- Step {i+1} {'Succeeded' if success else 'Failed'} ---\n")
+            QApplication.processEvents()
+
+            if not success:
+                total_success = False
+                reply = QMessageBox.warning(self, "Workflow Error",
+                    f"The script '{script_info['name']}' failed. Do you want to continue with the rest of the workflow?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+                if reply == QMessageBox.StandardButton.No:
+                    break
+        
+        dialog.mark_as_finished(total_success)
+
+    def get_script_by_id(self, script_id):
+        return next((s for s in settings.SCRIPTS if s['id'] == script_id), None)
+
+    def perform_script_audit(self):
+        untracked, missing = audit_script_files(settings.SCRIPTS, settings.SCRIPT_DIR)
+        if untracked:
+            logging.warning("AUDIT: The following scripts exist in the scripts directory but are not configured in settings.py:")
+            for script_file in untracked:
+                logging.warning(f"  - UNTRACKED: {script_file}")
+        if missing:
+            logging.warning("AUDIT: The following scripts are defined in settings.py but are MISSING from the scripts directory:")
+            for script_file in missing:
+                logging.warning(f"  - MISSING: {script_file}")
+
+    def closeEvent(self, event):
+        logging.info("Close event triggered.")
+        reply = QMessageBox.question(self, "Exit", 
+            "Are you sure you want to exit?\nThis will attempt to re-enable Gatekeeper for security.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes)
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            gatekeeper_script = self.get_script_by_id('enable_gatekeeper')
+            if gatekeeper_script:
+                logging.info("Running 'enable_gatekeeper' script before exiting.")
+                self.run_script(gatekeeper_script)
+            else:
+                logging.warning("Could not find 'enable_gatekeeper' script to run on exit.")
+            
+            logging.info("Exiting application.")
+            event.accept()
+        else:
+            event.ignore()
 
     def authenticate(self):
-        """Your existing app-level password check using sha256."""
-        logging.debug("Starting authentication")
         attempts = 0
-
-        while attempts < MAX_LOGIN_ATTEMPTS:
+        while attempts < settings.MAX_LOGIN_ATTEMPTS:
             dialog = PasswordDialog(self)
-            result = dialog.exec()
-
-            if result != QDialog.DialogCode.Accepted:
-                logging.info("Authentication cancelled by user")
-                return False
-
-            password = dialog.get_password()
-            entered_hash = sha256(password.encode()).hexdigest()
-
-            if entered_hash != PASSWORD_HASH:
-                attempts += 1
-                remaining = MAX_LOGIN_ATTEMPTS - attempts
-                logging.warning(f"Invalid password attempt {attempts}/{MAX_LOGIN_ATTEMPTS}")
-                if remaining > 0:
-                    QMessageBox.critical(
-                        self,
-                        "Error",
-                        f"Invalid password. {remaining} attempts remaining."
-                    )
-                else:
-                    QMessageBox.critical(
-                        self,
-                        "Error",
-                        "Maximum login attempts reached. Application will close."
-                    )
-                    self.open_web_link_on_fail()
-                    return False
-            else:
-                logging.info("App-level authentication succeeded")
+            if dialog.exec() != QDialog.DialogCode.Accepted: return False
+            entered_hash = sha256(dialog.get_password().encode()).hexdigest()
+            if entered_hash == settings.PASSWORD_HASH:
+                logging.info("App-level authentication successful.")
                 return True
-
+            attempts += 1
+            remaining = settings.MAX_LOGIN_ATTEMPTS - attempts
+            QMessageBox.critical(self, "Error", f"Invalid password. {remaining} attempts remaining.")
+        QMessageBox.critical(self, "Error", "Maximum login attempts reached.")
         return False
 
-    def authenticate_system_password(self) -> bool:
-        """
-        Prompts for the macOS system password, checks it with sudo -v,
-        and returns True if valid. Stores password in self.system_password.
-        """
+    def authenticate_system_password(self):
         dialog = SystemPasswordDialog(self)
-        result = dialog.exec()
-        if result != QDialog.DialogCode.Accepted:
-            return False  # user canceled
-
+        if dialog.exec() != QDialog.DialogCode.Accepted: return False
         self.system_password = dialog.get_system_password()
-        if not self.system_password:
+        if not self.system_password or not check_sudo_password(self.system_password):
+            QMessageBox.critical(self, "Error", "Invalid macOS system password.")
             return False
-
-        # Check if it's valid for sudo
-        if not check_sudo_password(self.system_password):
-            QMessageBox.critical(
-                self,
-                "Error",
-                "Invalid macOS system password. Cannot proceed."
-            )
-            return False
-
-        logging.info("System-level (sudo) password authenticated successfully")
+        logging.info("System-level (sudo) password authenticated.")
         return True
 
     def start_sudo_keep_alive(self):
-        """
-        Spawns a background thread to periodically call sudo -v
-        so the session doesn’t expire.
-        """
+        import threading
         self.keep_alive_thread = threading.Thread(
-            target=keep_sudo_active,
-            args=(self.system_password, 240),  # refresh every 4 minutes
-            daemon=True
+            target=keep_sudo_active, args=(self.system_password, 240), daemon=True
         )
         self.keep_alive_thread.start()
-
-    def run_new_setup(self):
-        """Example of running multiple scripts for 'New' setup."""
-        new_scripts = ['default_apps', 'teams', 'install_office', 'companyportal', 'vpnkeepalive', 'run_updates']  # Just an example
-        self.run_multiple_scripts(new_scripts, "New Setup")
-
-    def run_multiple_scripts(self, script_ids, setup_name):
-        """
-        Iterates through a sub-list of script IDs. For each script:
-          - Looks up the script in SCRIPTS
-          - Calls self.run_script(...)
-          - Updates a QProgressDialog
-        """
-        progress_steps = len(script_ids) * 10  # arbitrary scale
-        progress = QProgressDialog(f"Running {setup_name}...", "Cancel", 0, progress_steps, self)
-        progress.setWindowModality(Qt.WindowModality.ApplicationModal)
-        progress.setMinimumDuration(0)
-        progress.setValue(0)
-        progress.show()
-
-        all_successful = True
-        for idx, script_id in enumerate(script_ids, 1):
-            if progress.wasCanceled():
-                break
-
-            script = next((s for s in SCRIPTS if s['id'] == script_id), None)
-            if script:
-                success = self.run_script(script['name'], script['path'])
-                if not success:
-                    all_successful = False
-                    if not self.show_error_and_continue(script['name'], "Script execution failed"):
-                        break
-            else:
-                logging.error(f"Script with ID '{script_id}' not found for {setup_name}")
-                all_successful = False
-                if not self.show_error_and_continue(setup_name, "Script not found"):
-                    break
-
-            progress.setValue(idx * 10)
-            QApplication.processEvents()
-
-        progress.close()
-
-        if not all_successful:
-            QMessageBox.warning(
-                self,
-                "Warning",
-                f"{setup_name} completed with errors. Check the logs for details."
-            )
-        else:
-            QMessageBox.information(
-                self,
-                "Success",
-                f"{setup_name} completed successfully."
-            )
-
-    def run_script(self, script_name, script_path):
-        """
-        Looks up the script, checks if it needs sudo or not,
-        and runs it accordingly. Uses the sudo_utils methods.
-        """
-        logging.info(f"Attempting to run {script_name}")
-        progress = QProgressDialog(f"Running {script_name}...", "Cancel", 0, 100, self)
-        progress.setWindowModality(Qt.WindowModality.ApplicationModal)
-        progress.setMinimumDuration(0)  # Show immediately
-        progress.setValue(0)
-        progress.show()
-
-        try:
-            # Construct the full path. Adjust if your real structure is different.
-            script_full_path = Path(__file__).parent.parent / 'scripts' / Path(script_path).name
-            logging.debug(f"Script path: {script_full_path}")
-
-            if not script_full_path.exists():
-                raise FileNotFoundError(f"Script not found: {script_full_path}")
-
-            # Check if the script needs sudo
-            script_info = next((s for s in SCRIPTS if s['path'] == script_path), None)
-            needs_sudo = script_info.get('needs_sudo', False) if script_info else False
-
-            # Run the script
-            if needs_sudo:
-                success = run_script_as_sudo(script_full_path, self.system_password)
-            else:
-                success = run_script_no_sudo(script_full_path)
-
-            # Simulate progress
-            for i in range(1, 101, 10):
-                if progress.wasCanceled():
-                    logging.info(f"Script {script_name} was cancelled by user.")
-                    return False
-                progress.setValue(i)
-                time.sleep(0.05)
-                QApplication.processEvents()
-
-            progress.close()
-            return success
-
-        except Exception as e:
-            progress.close()
-            logging.error(f"Error running {script_name}: {str(e)}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to run {script_name}:\n{str(e)}")
-            return False
-
-    def show_error_and_continue(self, item_name, error_type):
-        error_message = f"{item_name} - {error_type}. Would you like to continue with the next script?"
-        response = QMessageBox.warning(
-            self,
-            "Error Detected",
-            error_message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        return (response == QMessageBox.StandardButton.Yes)
-
-    def run_script_by_id(self, script_id):
-        script = next((s for s in SCRIPTS if s['id'] == script_id), None)
-        if script:
-            self.run_script(script['name'], script['path'])
-        else:
-            logging.error(f"Script with ID '{script_id}' not found")
-            QMessageBox.critical(self, "Error", f"Script not found with ID: {script_id}")
-
-    def open_web_link_on_fail(self):
-        # If you like, open a help link or your website upon user lockout
-        import webbrowser
-        webbrowser.open("https://markhjorth.github.io/nedry/")
-
-def main():
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
-
-if __name__ == '__main__':
-    main()
+        logging.info("Sudo keep-alive thread started.")
