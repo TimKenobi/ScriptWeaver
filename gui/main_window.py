@@ -110,7 +110,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(info_action)
 
     def open_info_link(self):
-        webbrowser.open("https://github.com/TimKenobi?tab=overview")
+        webbrowser.open("https://github.com/TimKenobi/Script_Weaver/")
 
     def run_install_company_portal(self):
         """Run the Install Company Portal script."""
