@@ -8,7 +8,7 @@ from PyQt6.QtCore import Qt
 
 class PasswordDialog(QDialog):
     """
-    Existing dialog for your 'application-level' password.
+    Dialog for your 'application-level' password.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -45,7 +45,7 @@ class PasswordDialog(QDialog):
 
 class ScriptDialog(QDialog):
     """
-    Existing dialog that confirms whether the user wants to run a script.
+    Dialog that confirms whether the user wants to run a script.
     """
     def __init__(self, script_name, parent=None):
         super().__init__(parent)
@@ -75,7 +75,7 @@ class ScriptDialog(QDialog):
 
 class SystemPasswordDialog(QDialog):
     """
-    New dialog to prompt for the macOS system password exactly once.
+    Dialog to prompt for the macOS system password exactly once.
     You can call this after the user is authenticated at the app level,
     to allow all subsequent scripts to run without repeated sudo prompts.
     """
