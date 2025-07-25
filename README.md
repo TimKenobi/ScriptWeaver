@@ -4,6 +4,9 @@ Script Weaver is a Python-based GUI application designed to create, edit, manage
 
 Hint: Keep an eye out for possible Easter eggs, like references to classic movies—let the discovery be part of the fun!
 
+<img width="1000" height="828" alt="image" src="https://github.com/user-attachments/assets/b452d3c3-ad88-49c8-88d0-2f26bd085f50" />
+
+
 ## ✨ Features
 
 - **Modular Script Building**: Combine pre-defined or custom script modules into cohesive workflows using the GUI.
@@ -20,8 +23,24 @@ Hint: Keep an eye out for possible Easter eggs, like references to classic movie
 - **Branding Customization**: Customize the app's appearance and branding to fit your preferences.
 - **Wiki and Resource Links**: Integrated links to wikis, documentation, and other resources for scripts.
 - **Settings Panel**: Comprehensive settings for app behavior, including the ever important dark theme enabled by default.
-- **Execution Monitoring**: Tracks runtime and errors via detailed logs.
+- **Execution Monitoring**: Tracks runtime and errors via detailed logs. Including checking if scripts were deleted or menu item links are missing.
 - **File Management**: Handles script uploads, edits, inputs/outputs, and basic cleanup.
+
+## 📺 How It Looks
+
+<img width="1008" height="728" alt="image" src="https://github.com/user-attachments/assets/51aa79e9-bb7c-4454-af0a-c79c31c6ba65" />
+
+<img width="800" height="628" alt="image" src="https://github.com/user-attachments/assets/31a2d24f-c3b0-4ea5-8c18-98a9c6477f66" />
+
+<img width="500" height="369" alt="image" src="https://github.com/user-attachments/assets/709ae08f-9772-4ceb-bf2e-058a1f9c1e9f" />
+
+<img width="1008" height="728" alt="image" src="https://github.com/user-attachments/assets/876bad67-123f-4b47-bd4f-c3e328360e43" />
+
+<img width="500" height="372" alt="image" src="https://github.com/user-attachments/assets/c78db7c4-b127-4fdd-9913-74098a133f13" />
+
+<img width="1080" height="364" alt="image" src="https://github.com/user-attachments/assets/a4e9b7bc-449f-4fcb-a720-e48168947443" />
+
+<img width="700" height="528" alt="image" src="https://github.com/user-attachments/assets/721b6538-edca-437e-8381-da9f0e50e6ca" />
 
 ## ⚙️ How It Works
 
@@ -99,6 +118,13 @@ From the GUI, you can:
 ## 🤝 Contributing
 
 Contributions are welcome! Please fork the repository and submit a pull request with your changes. Ensure your code follows PEP8 standards and includes tests where applicable.
+
+## ☕ Support the Project
+
+If you find this tool helpful, consider buying me a coffee!
+[![image](https://github.com/user-attachments/assets/bcd2f077-633c-4bd9-9c7c-e5861e3d887f)
+](https://coff.ee/timkenobi)
+----------
 
 ## 📄 License
 
