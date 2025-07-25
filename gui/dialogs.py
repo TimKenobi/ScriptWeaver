@@ -1,15 +1,13 @@
-# dialogs.py
+# app/gui/dialogs.py
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QLabel,
-    QLineEdit, QPushButton, QMessageBox
+    QLineEdit, QPushButton, QDialogButtonBox
 )
 from PyQt6.QtCore import Qt
-
+from app.config import settings
 
 class PasswordDialog(QDialog):
-    """
-    Dialog for your 'application-level' password.
-    """
+    """Dialog for the 'application-level' password."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Authentication Required")
@@ -17,103 +15,75 @@ class PasswordDialog(QDialog):
         self.setup_ui()
 
     def setup_ui(self):
-        layout = QVBoxLayout()
-
-        # Password input
+        layout = QVBoxLayout(self)
         self.password_label = QLabel("Enter Admin Password:")
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-
-        # Login button
-        self.login_button = QPushButton("Login")
-        self.login_button.clicked.connect(self.accept)
-
-        # Cancel button
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.reject)
-
+        self.password_input.returnPressed.connect(self.accept)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
         layout.addWidget(self.password_label)
         layout.addWidget(self.password_input)
-        layout.addWidget(self.login_button)
-        layout.addWidget(self.cancel_button)
-
-        self.setLayout(layout)
+        layout.addWidget(button_box)
 
     def get_password(self):
         return self.password_input.text()
 
-
-class ScriptDialog(QDialog):
-    """
-    Dialog that confirms whether the user wants to run a script.
-    """
-    def __init__(self, script_name, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"Run {script_name}")
-        self.setModal(True)
-        self.setup_ui(script_name)
-
-    def setup_ui(self, script_name):
-        layout = QVBoxLayout()
-
-        # Confirmation message
-        message = QLabel(f"Are you sure you want to run {script_name}?")
-        layout.addWidget(message)
-
-        # Buttons
-        self.run_button = QPushButton("Run")
-        self.run_button.clicked.connect(self.accept)
-
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.reject)
-
-        layout.addWidget(self.run_button)
-        layout.addWidget(self.cancel_button)
-
-        self.setLayout(layout)
-
-
 class SystemPasswordDialog(QDialog):
-    """
-    Dialog to prompt for the macOS system password exactly once.
-    You can call this after the user is authenticated at the app level,
-    to allow all subsequent scripts to run without repeated sudo prompts.
-    """
+    """Dialog to prompt for the macOS system password once."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("System Password")
+        self.setWindowTitle("System Privileges Required")
         self.setModal(True)
         self.setup_ui()
 
     def setup_ui(self):
-        layout = QVBoxLayout()
-
-        # Explanation label
+        layout = QVBoxLayout(self)
         label = QLabel(
-            "Enter your macOS system password to allow root-level tasks.\n"
-            "This is required to run administrative scripts without repeated prompts."
+            "Enter your macOS system password to allow administrative scripts to run "
+            "without repeated prompts."
         )
         label.setWordWrap(True)
         layout.addWidget(label)
-
-        # Password input
         self.system_password_label = QLabel("macOS System Password:")
         self.system_password_input = QLineEdit()
         self.system_password_input.setEchoMode(QLineEdit.EchoMode.Password)
-
-        # OK/Cancel
-        self.ok_button = QPushButton("OK")
-        self.ok_button.clicked.connect(self.accept)
-
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.reject)
-
+        self.system_password_input.returnPressed.connect(self.accept)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
         layout.addWidget(self.system_password_label)
         layout.addWidget(self.system_password_input)
-        layout.addWidget(self.ok_button)
-        layout.addWidget(self.cancel_button)
-
-        self.setLayout(layout)
+        layout.addWidget(button_box)
 
     def get_system_password(self):
         return self.system_password_input.text()
+
+class AboutDialog(QDialog):
+    """A simple dialog to display application information."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"About {settings.APP_NAME}")
+        self.setModal(True)
+        
+        layout = QVBoxLayout(self)
+        
+        title_label = QLabel(settings.APP_NAME)
+        title_label.setStyleSheet("font-size: 18px; font-weight: bold;")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        version_label = QLabel(f"Version: {settings.APP_VERSION}")
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        company_label = QLabel(f"Company: {settings.COMPANY_NAME}")
+        company_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        ok_button = QPushButton("OK")
+        ok_button.clicked.connect(self.accept)
+        
+        layout.addWidget(title_label)
+        layout.addWidget(version_label)
+        layout.addWidget(company_label)
+        layout.addSpacing(20)
+        layout.addWidget(ok_button)
